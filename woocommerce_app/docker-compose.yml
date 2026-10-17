@@ -49,6 +49,31 @@ services:
     networks:
       - store_network
 
+  mcp:
+    build:
+      context: ./mcp
+    image: woo-mcp:local
+    restart: unless-stopped
+
+    depends_on:
+      wordpress:
+        condition: service_started
+
+    env_file:
+      - ./mcp/.env
+    environment:
+      # Containers reach WordPress by service name, not the host's localhost port.
+      WOO_BASE_URL: http://wordpress
+      WOO_FORWARDED_PROTO: https
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+
+    ports:
+      - "127.0.0.1:${MCP_PORT:-8000}:8000"
+
+    networks:
+      - store_network
+
 volumes:
   db_data:
   wordpress_data:

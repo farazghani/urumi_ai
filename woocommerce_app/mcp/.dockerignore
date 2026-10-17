@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!service.py
+!woo_client.py
