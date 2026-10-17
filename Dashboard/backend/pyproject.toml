@@ -1,0 +1,29 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Urumi dashboard, authenticated MCP gateway, and tool-calling assistant"
+readme = "README.md"
+authors = [
+    { email = "farazghani01@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "cryptography>=45",
+    "fastapi>=0.143.3",
+    "fastmcp>=2.12,<3",
+    "httpx>=0.28,<1",
+    "pydantic>=2.14.1",
+    "uvicorn>=0.35,<1",
+]
+
+[project.scripts]
+backend = "backend:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
