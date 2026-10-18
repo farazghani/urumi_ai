@@ -40,9 +40,13 @@ def upstreams():
         for p in children: p.wait(timeout=10)
 
 @pytest.fixture
-def workspace(tmp_path,monkeypatch,upstreams):
+def workspace(tmp_path,monkeypatch,upstreams,mariadb):
     monkeypatch.setattr(store,'DATA',tmp_path)
     monkeypatch.setenv('ADMIN_PASSWORD','test-admin-password-123')
+    with store.db() as db, db.cursor() as cursor:
+        cursor.execute('SET FOREIGN_KEY_CHECKS=0')
+        for table in ('sessions','api_keys','audit','upstreams','settings','users'):
+            cursor.execute(f'DROP TABLE IF EXISTS `{table}`')
     module.attempts.clear()
     with TestClient(module.app) as client:
         store.execute('DELETE FROM upstreams')
@@ -216,7 +220,7 @@ def test_catalog_save_and_key_lifecycle(workspace,router):
     assert workspace.get('/api/me').status_code==200
     assert not workspace.get('/api/settings/llm').json()['configured']
     assert configure(workspace).json()=={'provider':'openrouter','model':'fixture/tool-model','has_api_key':True,'configured':True}
-    encrypted=json.loads(store.query("SELECT value FROM settings WHERE key='llm'",one=True)['value'])['api_key']
+    encrypted=json.loads(store.query("SELECT value FROM settings WHERE `key`='llm'",one=True)['value'])['api_key']
     assert encrypted!='provider-secret' and store.unseal(encrypted)=='provider-secret'
     assert workspace.put('/api/settings/llm',json={'model':'fixture/tool-model','api_key':None}).status_code==200
     assert workspace.get('/api/settings/llm').json()['has_api_key']
@@ -224,12 +228,12 @@ def test_catalog_save_and_key_lifecycle(workspace,router):
     assert not workspace.get('/api/settings/llm').json()['configured']
 
 def test_legacy_full_endpoint_migrates_without_duplicate_path(workspace,router):
-    store.execute("INSERT OR REPLACE INTO settings VALUES('llm',?)",(json.dumps({'base_url':'https://openrouter.ai/api/v1/chat/completions','model':'fixture/tool-model','api_key':store.seal('provider-secret')}),))
+    store.execute("REPLACE INTO settings VALUES('llm',?)",(json.dumps({'base_url':'https://openrouter.ai/api/v1/chat/completions','model':'fixture/tool-model','api_key':store.seal('provider-secret')}),))
     assert workspace.get('/api/settings/llm').json()['configured']
     r=workspace.post('/api/chat',json={'message':'multiply'})
     assert r.status_code==200,r.text
     assert router.requests[0]['path']=='/api/v1/chat/completions'
-    store.execute("UPDATE settings SET value=? WHERE key='llm'",(json.dumps({'base_url':'https://different-provider.test/v1','model':'other/model','api_key':store.seal('other-secret')}),))
+    store.execute("UPDATE settings SET value=? WHERE `key`='llm'",(json.dumps({'base_url':'https://different-provider.test/v1','model':'other/model','api_key':store.seal('other-secret')}),))
     assert not workspace.get('/api/settings/llm').json()['has_api_key']
 
 def test_connection_probe_does_not_execute_gateway_tools_or_save(workspace,router):
@@ -254,3 +258,21 @@ def test_error_in_http_200_is_reported(workspace,router):
     configure(workspace);router.error_status=429;router.error_in_success=True
     r=workspace.post('/api/chat',json={'message':'multiply'})
     assert r.status_code==429 and 'rate limit' in r.text
+
+
+def test_overview_dates_remain_json_strings(workspace):
+    user=store.query("SELECT * FROM users WHERE role='admin'",one=True)
+    store.audit(user,'tool.call','date-check',duration=8)
+    result=workspace.get('/api/overview')
+    assert result.status_code==200
+    assert result.json()['daily'][-1]['day']==time.strftime('%Y-%m-%d',time.gmtime())
+    assert isinstance(workspace.get('/api/audit').json()[0]['created'],str)
+
+
+def test_transactions_roll_back_and_enforce_foreign_keys(workspace):
+    before=len(store.query('SELECT id FROM upstreams'))
+    with pytest.raises(store.IntegrityError):
+        with store.db() as db, db.cursor() as cursor:
+            cursor.execute("INSERT INTO upstreams(name,url) VALUES('rollback','http://example.invalid')")
+            cursor.execute("INSERT INTO sessions VALUES('invalid-user',99999,9999999999)")
+    assert len(store.query('SELECT id FROM upstreams'))==before

@@ -22,11 +22,17 @@
     const args = {};
     for (const [name, field] of Object.entries(schema.properties || {})) {
       if (Object.hasOwn(field, 'default')) args[name] = field.default;
-      else if ((schema.required || []).includes(name)) args[name] = sampleValue(field);
+      else if ((schema.required || []).includes(name)) args[name] = name.endsWith('_id') ? null : sampleValue(field);
       // Omitted optional fields are left to the upstream's own defaults.
     }
     return args;
   }
-  root.UrumiToolInputs = { defaultArguments };
+  function orderArguments(schema, orders, selectFirst = true) {
+    const args = defaultArguments(schema);
+    const first = (orders || []).find(order => Number.isInteger(order?.id) && order.id > 0);
+    args.order_id = selectFirst && first ? first.id : null;
+    return args;
+  }
+  root.UrumiToolInputs = { defaultArguments, orderArguments };
   if (typeof module !== 'undefined') module.exports = root.UrumiToolInputs;
 })(globalThis);

@@ -5,7 +5,6 @@ import json
 import os
 import re
 import secrets
-import sqlite3
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -86,7 +85,7 @@ def signup(data:Credentials, request:Request,response:Response):
     throttle(request)
     try:
         uid=store.execute('INSERT INTO users(name,email,password) VALUES(?,?,?)',(data.name.strip(),data.email,store.password_hash(data.password)))
-    except sqlite3.IntegrityError: fail(409,'An account with this email already exists.')
+    except store.IntegrityError: fail(409,'An account with this email already exists.')
     user=store.query('SELECT * FROM users WHERE id=?',(uid,),one=True)
     store.audit(user,'account.created')
     return session(user,response)
@@ -211,7 +210,7 @@ def overview(request:Request):
     user=current(request)
     where='' if user['role']=='admin' else ' WHERE user_id='+str(user['id'])
     calls=store.query("SELECT status,duration,created FROM audit"+where+(' AND ' if where else ' WHERE ')+"action IN ('tool.call','chat.tool')")
-    return {'calls':len(calls),'errors':sum(c['status']=='error' for c in calls),'avg_latency':round(sum(c['duration'] for c in calls)/len(calls)) if calls else 0,'daily':store.query("SELECT date(created) AS day,count(*) AS count FROM audit"+where+(' AND ' if where else ' WHERE ')+"action IN ('tool.call','chat.tool') AND created>=datetime('now','-13 days') GROUP BY day")}
+    return {'calls':len(calls),'errors':sum(c['status']=='error' for c in calls),'avg_latency':round(sum(c['duration'] for c in calls)/len(calls)) if calls else 0,'daily':store.query("SELECT date(created) AS day,count(*) AS count FROM audit"+where+(' AND ' if where else ' WHERE ')+"action IN ('tool.call','chat.tool') AND created>=(UTC_TIMESTAMP() - INTERVAL 13 DAY) GROUP BY day")}
 
 @app.post('/mcp')
 async def mcp(request:Request):
@@ -238,6 +237,7 @@ async def mcp(request:Request):
 class ToolCall(BaseModel):
     name:str
     arguments:dict=Field(default_factory=dict)
+
 @app.post('/api/tools/call')
 async def tool_call(data:ToolCall,request:Request): return await gateway.call(current(request),data.name,data.arguments)
 
@@ -269,7 +269,7 @@ class LLMSettings(BaseModel):
 
 
 def llm_config():
-    row = store.query("SELECT value FROM settings WHERE key='llm'", one=True)
+    row = store.query("SELECT value FROM settings WHERE `key`='llm'", one=True)
     old = json.loads(row['value']) if row else {}
     # Preserve existing OpenRouter settings, including ones saved with the full endpoint.
     # Never forward a key belonging to another provider to OpenRouter.
@@ -325,7 +325,7 @@ async def set_llm(data: LLMSettings, request: Request):
         except openrouter.ProviderError as error:
             provider_failure(error)
     config = {'provider': 'openrouter', 'model': data.model, 'api_key': store.seal(secret)}
-    store.execute("INSERT OR REPLACE INTO settings VALUES('llm',?)", (json.dumps(config),))
+    store.set_setting('llm', json.dumps(config))
     store.audit(user, 'llm.updated')
     return public_llm(config)
 
@@ -400,7 +400,10 @@ async def chat(data:Chat,request:Request):
     return {'message':'Reached the six-step tool limit. Review completed calls and continue with a follow-up.','tools':trace}
 
 @app.get('/health')
-def health(): return {'status':'ok'}
-@app.get('/')
-def index(): return FileResponse(FRONTEND/'index.html')
-app.mount('/static',StaticFiles(directory=FRONTEND),name='static')
+def health():
+    store.query('SELECT 1 AS ready', one=True)
+    return {'status':'ok'}
+if os.getenv('SERVE_FRONTEND', '1') == '1':
+    @app.get('/')
+    def index(): return FileResponse(FRONTEND/'index.html')
+    app.mount('/static', StaticFiles(directory=FRONTEND), name='static')

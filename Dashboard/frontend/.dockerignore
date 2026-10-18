@@ -1,0 +1,8 @@
+*
+!Dockerfile
+!nginx.conf
+!proxy.conf
+!index.html
+!app.js
+!tool-inputs.js
+!style.css

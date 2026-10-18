@@ -1,0 +1,92 @@
+services:
+  frontend:
+    build: ./frontend
+    image: urumi-dashboard-frontend:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-8001}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [dashboard]
+
+  backend:
+    build: ./backend
+    image: urumi-dashboard-backend:local
+    restart: unless-stopped
+    environment:
+      SERVE_FRONTEND: "0"
+      DASHBOARD_DATA: /data
+      MYSQL_HOST: db
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-urumi_dashboard}
+      MYSQL_USER: ${MYSQL_USER:-urumi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in Dashboard/.env}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@urumi.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+      WOO_MCP_URL: ${WOO_MCP_URL:-http://host.docker.internal:8000/mcp}
+      CLOCK_MCP_URL: http://clock:8002/mcp
+      CALCULATOR_MCP_URL: http://calculator:8003/mcp
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - dashboard_data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [dashboard]
+
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${MYSQL_DATABASE:-urumi_dashboard}
+      MARIADB_USER: ${MYSQL_USER:-urumi}
+      MARIADB_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in Dashboard/.env}
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in Dashboard/.env}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 20
+    networks: [dashboard]
+
+  clock:
+    image: urumi-dashboard-backend:local
+    pull_policy: never
+    command: ["python", "-m", "backend.upstreams", "clock"]
+    restart: unless-stopped
+    environment:
+      MCP_HOST: 0.0.0.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8002), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks: [dashboard]
+
+  calculator:
+    image: urumi-dashboard-backend:local
+    pull_policy: never
+    command: ["python", "-m", "backend.upstreams", "calculator"]
+    restart: unless-stopped
+    environment:
+      MCP_HOST: 0.0.0.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8003), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks: [dashboard]
+
+volumes:
+  dashboard_data:
+  mariadb_data:
+networks:
+  dashboard:

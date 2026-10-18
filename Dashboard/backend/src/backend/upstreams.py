@@ -1,6 +1,7 @@
 """Two real, independent Streamable HTTP demo upstreams. No external API keys needed."""
 import argparse
 import math
+import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastmcp import FastMCP
@@ -37,4 +38,4 @@ def make_server(kind):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(); parser.add_argument('kind',choices=['clock','calculator']); args=parser.parse_args()
-    make_server(args.kind).run(transport='http',host='127.0.0.1',port=8002 if args.kind=='clock' else 8003,show_banner=False)
+    make_server(args.kind).run(transport='http',host=os.getenv('MCP_HOST','127.0.0.1'),port=int(os.getenv('MCP_PORT',8002 if args.kind=='clock' else 8003)),show_banner=False)

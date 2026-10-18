@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.143.3",
     "fastmcp>=2.12,<3",
     "httpx>=0.28,<1",
+    "pymysql>=1.1,<2",
     "pydantic>=2.14.1",
     "uvicorn>=0.35,<1",
 ]

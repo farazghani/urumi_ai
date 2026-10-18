@@ -1,0 +1,5 @@
+# Optional: expose only the database for the host Python development server.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-3307}:3306"
