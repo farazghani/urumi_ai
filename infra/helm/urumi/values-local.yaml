@@ -1,0 +1,10 @@
+images:
+  wordpress: {tag: local}
+  backend: {tag: local}
+  frontend: {tag: local}
+  wooMcp: {tag: local}
+ingress:
+  storeHost: store.urumi.test
+  dashboardHost: dashboard.urumi.test
+persistence:
+  storageClass: local-path

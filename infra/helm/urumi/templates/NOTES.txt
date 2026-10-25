@@ -1,0 +1,8 @@
+Store: {{ include "urumi.storeUrl" . }}
+Dashboard: {{ ternary "https" "http" .Values.ingress.tls.enabled }}://{{ .Values.ingress.dashboardHost }}
+Gateway: {{ ternary "https" "http" .Values.ingress.tls.enabled }}://{{ .Values.ingress.dashboardHost }}/mcp
+
+Local DNS: map both hostnames to 127.0.0.1 in /etc/hosts.
+Credentials are in the existing Secrets; see infra/README.md.
+PVCs are retained by default. Back up both databases, WordPress content,
+and the dashboard encryption key before upgrades or infrastructure changes.

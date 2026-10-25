@@ -401,7 +401,14 @@ async def chat(data:Chat,request:Request):
 
 @app.get('/health')
 def health():
-    store.query('SELECT 1 AS ready', one=True)
+    try:
+        store.query('SELECT 1 AS ready', one=True)
+    except (store.pymysql.MySQLError, RuntimeError):
+        return JSONResponse({'status':'unavailable'}, status_code=503)
+    return {'status':'ok'}
+
+@app.get('/live')
+def live():
     return {'status':'ok'}
 if os.getenv('SERVE_FRONTEND', '1') == '1':
     @app.get('/')

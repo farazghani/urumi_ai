@@ -1,0 +1,567 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Urumi deployment values",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "global",
+    "maintenance",
+    "networkPolicy",
+    "images",
+    "secrets",
+    "ingress",
+    "persistence",
+    "databases",
+    "wordpress",
+    "backend",
+    "frontend",
+    "wooMcp",
+    "clock",
+    "calculator",
+    "probes"
+  ],
+  "properties": {
+    "global": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "imagePullPolicy",
+        "imagePullSecrets"
+      ],
+      "properties": {
+        "imagePullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253,
+                "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "maintenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "ingressNamespace",
+        "ingressPodSelector"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "ingressNamespace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "ingressPodSelector": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wordpress",
+        "backend",
+        "frontend",
+        "wooMcp"
+      ],
+      "properties": {
+        "wordpress": {
+          "$ref": "#/definitions/image"
+        },
+        "backend": {
+          "$ref": "#/definitions/image"
+        },
+        "frontend": {
+          "$ref": "#/definitions/image"
+        },
+        "wooMcp": {
+          "$ref": "#/definitions/image"
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "storeDatabase",
+        "dashboardDatabase",
+        "wordpress",
+        "wooMcp",
+        "dashboard"
+      ],
+      "properties": {
+        "storeDatabase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "dashboardDatabase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "wordpress": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "wooMcp": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "dashboard": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "className",
+        "annotations",
+        "storeHost",
+        "dashboardHost",
+        "tls"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "storeHost": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "dashboardHost": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "secretName"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "secretName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 253,
+              "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+            }
+          }
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "storageClass",
+        "retain"
+      ],
+      "properties": {
+        "storageClass": {
+          "type": "string"
+        },
+        "retain": {
+          "type": "boolean"
+        }
+      }
+    },
+    "databases": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "store",
+        "dashboard"
+      ],
+      "properties": {
+        "store": {
+          "$ref": "#/definitions/database"
+        },
+        "dashboard": {
+          "$ref": "#/definitions/database"
+        }
+      }
+    },
+    "wordpress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "storage",
+        "title",
+        "adminUser",
+        "adminEmail",
+        "resources",
+        "bootstrap"
+      ],
+      "properties": {
+        "storage": {
+          "$ref": "#/definitions/storage"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "adminUser": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "adminEmail": {
+          "type": "string",
+          "minLength": 3
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        },
+        "bootstrap": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "activeDeadlineSeconds",
+            "resources"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "activeDeadlineSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "resources": {
+              "$ref": "#/definitions/resources"
+            }
+          }
+        }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adminEmail",
+        "openrouterModel",
+        "resources"
+      ],
+      "properties": {
+        "adminEmail": {
+          "type": "string",
+          "minLength": 3
+        },
+        "openrouterModel": {
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trustedProxyCidrs",
+        "resources"
+      ],
+      "properties": {
+        "trustedProxyCidrs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      }
+    },
+    "wooMcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resources"
+      ],
+      "properties": {
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      }
+    },
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resources"
+      ],
+      "properties": {
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      }
+    },
+    "calculator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resources"
+      ],
+      "properties": {
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "periodSeconds",
+        "timeoutSeconds",
+        "failureThreshold",
+        "startupFailureThreshold"
+      ],
+      "properties": {
+        "periodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failureThreshold": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "startupFailureThreshold": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  },
+  "definitions": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "tag",
+        "digest"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requests",
+        "limits"
+      ],
+      "properties": {
+        "requests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cpu",
+            "memory"
+          ],
+          "properties": {
+            "cpu": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9]+(\\.[0-9]+)?(m|Ki|Mi|Gi|Ti)?$"
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              ]
+            },
+            "memory": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9]+(\\.[0-9]+)?(m|Ki|Mi|Gi|Ti)?$"
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              ]
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cpu",
+            "memory"
+          ],
+          "properties": {
+            "cpu": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9]+(\\.[0-9]+)?(m|Ki|Mi|Gi|Ti)?$"
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              ]
+            },
+            "memory": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9]+(\\.[0-9]+)?(m|Ki|Mi|Gi|Ti)?$"
+                },
+                {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "size",
+        "existingClaim"
+      ],
+      "properties": {
+        "size": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$"
+        },
+        "existingClaim": {
+          "type": "string"
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "database",
+        "username",
+        "storage",
+        "resources"
+      ],
+      "properties": {
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "database": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_]+$"
+        },
+        "username": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_]+$"
+        },
+        "storage": {
+          "$ref": "#/definitions/storage"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{{- $name := include "urumi.name" . -}}
+{{- range $kind, $config := .Values.databases }}
+{{- $component := printf "%s-db" $kind }}
+{{- $secret := ternary $.Values.secrets.storeDatabase $.Values.secrets.dashboardDatabase (eq $kind "store") }}
+{{- $prefix := ternary "MYSQL" "MARIADB" (eq $kind "store") }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}-{{ $component }}
+  labels:
+    {{- include "urumi.labels" $ | nindent 4 }}
+spec:
+  serviceName: {{ $name }}-{{ $component }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $component }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+        app.kubernetes.io/component: {{ $component }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: database
+          image: {{ include "urumi.image" $config.image | quote }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          ports: [{name: mysql, containerPort: 3306}]
+          env:
+            - {name: {{ $prefix }}_DATABASE, value: {{ $config.database | quote }}}
+            - {name: {{ $prefix }}_USER, value: {{ $config.username | quote }}}
+            - name: {{ $prefix }}_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: password}}
+            - name: {{ $prefix }}_ROOT_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: root-password}}
+          resources: {{ toYaml $config.resources | nindent 12 }}
+          startupProbe:
+            tcpSocket: {port: mysql}
+            periodSeconds: {{ $.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.startupFailureThreshold }}
+          livenessProbe:
+            tcpSocket: {port: mysql}
+            periodSeconds: {{ $.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.failureThreshold }}
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -ec
+                {{- if eq $kind "store" }}
+                - 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -h 127.0.0.1 -u "$MYSQL_USER" "$MYSQL_DATABASE" -Nse "SELECT 1"'
+                {{- else }}
+                - 'MYSQL_PWD="$MARIADB_PASSWORD" mariadb -h 127.0.0.1 -u "$MARIADB_USER" "$MARIADB_DATABASE" -Nse "SELECT 1"'
+                {{- end }}
+            periodSeconds: {{ $.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.failureThreshold }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/mysql}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $config.storage.existingClaim | default (printf "%s-%s-data" $name $component) }}
+{{- end }}

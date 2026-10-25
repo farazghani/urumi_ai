@@ -1,0 +1,20 @@
+{{- $name := include "urumi.name" . -}}
+{{- range $component, $port := dict "wordpress" 80 "store-db" 3306 "dashboard-db" 3306 "backend" 8001 "frontend" 8080 "woo-mcp" 8000 "clock" 8002 "calculator" 8003 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-{{ $component }}
+  labels:
+    {{- include "urumi.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: {{ if contains "db" $component }}mysql{{ else }}http{{ end }}
+      port: {{ $port }}
+      targetPort: {{ $port }}
+  selector:
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/component: {{ $component }}
+{{- end }}

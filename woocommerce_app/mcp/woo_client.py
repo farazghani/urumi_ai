@@ -13,6 +13,10 @@ import httpx
 class WooError(Exception):
     """Configuration, validation, or store request failure safe to show to callers."""
 
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class WooClient:
     def __init__(self, base_url: str, consumer_key: str, consumer_secret: str,
@@ -61,7 +65,7 @@ class WooClient:
                 message = error.get("message", "Store request failed") if isinstance(error, dict) else "Store request failed"
             except ValueError:
                 message = "Store returned a non-JSON error"
-            raise WooError(f"WooCommerce HTTP {response.status_code}: {message}")
+            raise WooError(f"WooCommerce HTTP {response.status_code}: {message}", status_code=response.status_code)
         return response
 
     @staticmethod
@@ -72,17 +76,24 @@ class WooClient:
             raise WooError("WooCommerce returned invalid JSON") from None
 
     @staticmethod
-    def _product(item: dict[str, Any]) -> dict[str, Any]:
-        return {key: item.get(key) for key in (
-            "id", "name", "status", "price", "regular_price", "sku", "stock_status", "permalink"
-        )}
+    def _product(item: dict[str, Any], *, detailed: bool = False) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            raise WooError("WooCommerce returned an invalid product response")
+        keys = ["id", "name", "status", "price", "regular_price", "sku", "stock_status", "permalink"]
+        if detailed:
+            keys += ["type", "description", "short_description", "sale_price", "manage_stock", "stock_quantity", "categories"]
+        return {key: item.get(key) for key in keys}
 
     @staticmethod
     def _order(item: dict[str, Any], *, detailed: bool = False) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            raise WooError("WooCommerce returned an invalid order response")
         order = {key: item.get(key) for key in (
             "id", "status", "total", "currency", "date_created", "line_items"
         )}
         billing = item.get("billing") or {}
+        if not isinstance(billing, dict):
+            raise WooError("WooCommerce returned invalid order billing data")
         order["customer"] = " ".join(filter(None, (billing.get("first_name"), billing.get("last_name"))))
         if detailed:
             order.update(payment_method=item.get("payment_method_title"),
@@ -91,12 +102,38 @@ class WooClient:
                          date_modified=item.get("date_modified"))
         return order
 
+    @staticmethod
+    def _customer(item: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            raise WooError("WooCommerce returned an invalid customer response")
+        # Explicit fields exclude password, arbitrary metadata and billing/shipping addresses.
+        return {key: item.get(key) for key in (
+            "id", "email", "first_name", "last_name", "username", "date_created", "is_paying_customer"
+        )}
+
+    @staticmethod
+    def _price(value: float) -> str:
+        try:
+            price = Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            raise WooError("regular_price must be a finite non-negative number") from None
+        if not price.is_finite() or price < 0:
+            raise WooError("regular_price must be a finite non-negative number")
+        return format(price, "f")
+
+    @staticmethod
+    def _name(value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise WooError("name must contain a non-whitespace character")
+        return name
+
     async def _list(self, resource: str, params: dict[str, Any]) -> dict[str, Any]:
         response = await self._request("GET", resource, params={k: v for k, v in params.items() if v is not None})
         items = self._json(response)
         if not isinstance(items, list):
             raise WooError("WooCommerce returned an invalid list response")
-        summarize = self._product if resource == "products" else self._order
+        summarize = {"products": self._product, "orders": self._order, "customers": self._customer}[resource]
         try:
             return {"items": [summarize(item) for item in items], "page": params["page"],
                     "per_page": params["per_page"], "total": int(response.headers.get("X-WP-Total", len(items))),
@@ -110,16 +147,37 @@ class WooClient:
 
     async def create_product(self, name: str, regular_price: float, *, description: str = "",
                              sku: str | None = None, status: str = "publish") -> dict[str, Any]:
-        try:
-            price = Decimal(str(regular_price))
-        except InvalidOperation:
-            raise WooError("regular_price must be a finite non-negative number") from None
-        if not price.is_finite() or price < 0:
-            raise WooError("regular_price must be a finite non-negative number")
-        body = dict(name=name, type="simple", regular_price=format(price, "f"), description=description, status=status)
+        body = dict(name=self._name(name), type="simple", regular_price=self._price(regular_price),
+                    description=description, status=status)
         if sku is not None:
             body["sku"] = sku
         return self._product(self._json(await self._request("POST", "products", json=body)))
+
+    async def get_product(self, product_id: int) -> dict[str, Any]:
+        response = await self._request("GET", f"products/{product_id}")
+        return self._product(self._json(response), detailed=True)
+
+    async def update_product(self, product_id: int, *, name: str | None = None,
+                             regular_price: float | None = None, description: str | None = None,
+                             sku: str | None = None, status: str | None = None) -> dict[str, Any]:
+        body = {key: value for key, value in dict(name=name, regular_price=regular_price,
+                description=description, sku=sku, status=status).items() if value is not None}
+        if not body:
+            raise WooError("Provide at least one product field to update")
+        if name is not None:
+            body["name"] = self._name(name)
+        if regular_price is not None:
+            body["regular_price"] = self._price(regular_price)
+        response = await self._request("PUT", f"products/{product_id}", json=body)
+        return self._product(self._json(response), detailed=True)
+
+    async def list_customers(self, *, search: str | None = None, email: str | None = None,
+                             page: int = 1, per_page: int = 20) -> dict[str, Any]:
+        return await self._list("customers", dict(search=search, email=email, page=page, per_page=per_page))
+
+    async def get_customer(self, customer_id: int) -> dict[str, Any]:
+        response = await self._request("GET", f"customers/{customer_id}")
+        return self._customer(self._json(response))
 
     async def list_orders(self, *, status: str | None = None, after: str | None = None,
                           before: str | None = None, search: str | None = None,
@@ -136,7 +194,15 @@ class WooClient:
                                                 page=page, per_page=per_page, orderby="date", order="desc"))
 
     async def get_order(self, order_id: int) -> dict[str, Any]:
-        return self._order(self._json(await self._request("GET", f"orders/{order_id}")), detailed=True)
+        try:
+            response = await self._request("GET", f"orders/{order_id}")
+        except WooError as error:
+            if error.status_code == 404:
+                raise WooError(f"Order {order_id} was not found (WooCommerce HTTP 404). "
+                               "Call list_orders and use the id of an existing order; IDs are not sequential "
+                               "and are not necessarily the storefront order number.", status_code=404) from None
+            raise
+        return self._order(self._json(response), detailed=True)
 
     async def update_order_status(self, order_id: int, status: str) -> dict[str, Any]:
         return self._order(self._json(await self._request("PUT", f"orders/{order_id}", json={"status": status})), detailed=True)

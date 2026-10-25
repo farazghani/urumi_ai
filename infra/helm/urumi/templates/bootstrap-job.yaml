@@ -1,0 +1,65 @@
+{{- if and .Values.wordpress.bootstrap.enabled (not .Values.maintenance.enabled) }}
+{{- $name := include "urumi.name" . }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-wordpress-bootstrap
+  labels:
+    {{- include "urumi.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: {{ .Values.wordpress.bootstrap.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: wordpress-bootstrap
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 33
+        runAsGroup: 33
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: bootstrap
+          image: {{ include "urumi.image" .Values.images.wordpress | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: [bash, /bootstrap/bootstrap.sh]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          env:
+            {{- include "urumi.wordpressEnv" . | nindent 12 }}
+            - {name: HOME, value: /tmp}
+            - {name: WORDPRESS_PUBLIC_URL, value: {{ include "urumi.storeUrl" . | quote }}}
+            - {name: WORDPRESS_TITLE, value: {{ .Values.wordpress.title | quote }}}
+            - {name: WORDPRESS_ADMIN_USER, value: {{ .Values.wordpress.adminUser | quote }}}
+            - {name: WORDPRESS_ADMIN_EMAIL, value: {{ .Values.wordpress.adminEmail | quote }}}
+            - name: WORDPRESS_ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.secrets.wordpress }}, key: admin-password}}
+            - name: WOO_CONSUMER_KEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.secrets.wooMcp }}, key: consumer-key}}
+            - name: WOO_CONSUMER_SECRET
+              valueFrom: {secretKeyRef: {name: {{ .Values.secrets.wooMcp }}, key: consumer-secret}}
+          resources: {{ toYaml .Values.wordpress.bootstrap.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/www/html}
+            - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.wordpress.storage.existingClaim | default (printf "%s-wordpress-data" $name) }}
+        - name: bootstrap
+          configMap: {name: {{ $name }}-wordpress}
+        - {name: tmp, emptyDir: {}}
+{{- end }}

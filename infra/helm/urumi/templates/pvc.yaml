@@ -1,0 +1,22 @@
+{{- $name := include "urumi.name" . -}}
+{{- range $component, $storage := dict "wordpress" .Values.wordpress.storage "store-db" .Values.databases.store.storage "dashboard-db" .Values.databases.dashboard.storage }}
+{{- if not $storage.existingClaim }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-{{ $component }}-data
+  labels:
+    {{- include "urumi.labels" $ | nindent 4 }}
+  {{- if $.Values.persistence.retain }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- include "urumi.storageClass" $ | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $storage.size }}
+{{- end }}
+{{- end }}

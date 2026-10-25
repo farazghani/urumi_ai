@@ -1,0 +1,37 @@
+{{- if and .Values.ingress.enabled (not .Values.maintenance.enabled) }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "urumi.name" . }}
+  labels:
+    {{- include "urumi.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.storeHost | quote }}, {{ .Values.ingress.dashboardHost | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.storeHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "urumi.name" . }}-wordpress
+                port: {number: 80}
+    - host: {{ .Values.ingress.dashboardHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "urumi.name" . }}-frontend
+                port: {number: 8080}
+{{- end }}

@@ -89,7 +89,11 @@ def password_hash(password, salt=None):
     return salt + ':' + hashlib.scrypt(password.encode(), salt=salt.encode(), n=16384, r=8, p=1).hex()
 
 def cipher():
-    return Fernet((DATA / 'encryption.key').read_bytes())
+    return Fernet(encryption_key_path().read_bytes().strip())
+
+def encryption_key_path():
+    """A mounted Kubernetes Secret can replace the legacy writable key file."""
+    return Path(os.environ['ENCRYPTION_KEY_FILE']) if os.getenv('ENCRYPTION_KEY_FILE') else DATA / 'encryption.key'
 
 def seal(value):
     return cipher().encrypt(value.encode()).decode() if value else ''
@@ -104,13 +108,17 @@ def init():
         raise RuntimeError('Legacy SQLite data found. Run import-local-data.py before starting the backend.')
     DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(DATA, 0o700)
-    key = DATA / 'encryption.key'
+    key = encryption_key_path()
     if not key.exists():
+        if os.getenv('ENCRYPTION_KEY_FILE'):
+            raise RuntimeError('ENCRYPTION_KEY_FILE must point to an existing encryption key.')
         if existing:
             raise RuntimeError('Existing MariaDB data requires its original encryption.key. Restore the data volume.')
         with key.open('xb') as f:
             os.chmod(key, 0o600)
             f.write(Fernet.generate_key())
+    # Validate before creating users or encrypting bootstrap credentials.
+    cipher()
     if not query("SELECT id FROM users WHERE role='admin'", one=True):
         password = os.getenv('ADMIN_PASSWORD') or secrets.token_urlsafe(18)
         email = os.getenv('ADMIN_EMAIL', 'admin@urumi.local').lower()
@@ -122,7 +130,9 @@ def init():
                 f.write(f'Email: {email}\nPassword: {password}\n')
     if not query("SELECT `key` FROM settings WHERE `key`='seeded'", one=True):
         for name, url in [('WooCommerce', os.getenv('WOO_MCP_URL', 'http://127.0.0.1:8000/mcp')), ('Clock', os.getenv('CLOCK_MCP_URL', 'http://127.0.0.1:8002/mcp')), ('Calculator', os.getenv('CALCULATOR_MCP_URL', 'http://127.0.0.1:8003/mcp'))]:
-            execute('INSERT INTO upstreams(name,url) VALUES(?,?)', (name,url))
+            token = os.getenv('WOO_MCP_AUTH_TOKEN', '') if name == 'WooCommerce' else ''
+            execute('INSERT INTO upstreams(name,url,auth_header,credential) VALUES(?,?,?,?)',
+                    (name, url, 'Authorization' if token else '', seal('Bearer ' + token) if token else ''))
         execute("INSERT INTO settings VALUES('seeded','1')")
 
 def audit(user, action, target='', status='success', duration=0):

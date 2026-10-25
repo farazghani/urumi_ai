@@ -1,0 +1,46 @@
+# Local credentials (keep configuration examples)
+.env
+.env.*
+!.env.example
+!.env.*.example
+.secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Kubernetes client configuration and local state
+*.kubeconfig
+kubeconfig
+kubeconfig.*
+.kube/
+.k3d/
+
+# Persistent application data, backups and packaged artifacts
+.data/
+.backups/
+/backups/
+*.sql.gz
+*.dump
+*.tar.gz
+*.tgz
+
+# Python environments, build output and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.uv-cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local logs and operating-system files
+*.log
+.DS_Store

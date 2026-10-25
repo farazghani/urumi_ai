@@ -1,0 +1,109 @@
+# Credentials are supplied in pre-created Secrets, never in Helm values.
+global:
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+# Stop public traffic and the gateway during backup/restore; databases stay up.
+maintenance:
+  enabled: false
+
+networkPolicy:
+  enabled: true
+  ingressNamespace: kube-system
+  ingressPodSelector:
+    app.kubernetes.io/name: traefik
+
+images:
+  wordpress: {repository: urumi-wordpress, tag: "0.1.0", digest: ""}
+  backend: {repository: urumi-dashboard-backend, tag: "0.1.0", digest: ""}
+  frontend: {repository: urumi-dashboard-frontend, tag: "0.1.0", digest: ""}
+  wooMcp: {repository: urumi-woo-mcp, tag: "0.1.0", digest: ""}
+
+secrets:
+  storeDatabase: urumi-store-db
+  dashboardDatabase: urumi-dashboard-db
+  wordpress: urumi-wordpress
+  wooMcp: urumi-woo-mcp
+  dashboard: urumi-dashboard
+
+ingress:
+  enabled: true
+  className: traefik
+  annotations: {}
+  storeHost: store.urumi.test
+  dashboardHost: dashboard.urumi.test
+  tls:
+    enabled: false
+    secretName: urumi-tls
+
+persistence:
+  # Empty means the cluster's default StorageClass. Use "-" to disable provisioning.
+  storageClass: ""
+  # Prevent Helm uninstall from deleting application PVCs.
+  retain: true
+
+databases:
+  store:
+    image: {repository: mysql, tag: "8.4", digest: ""}
+    database: woocommerce
+    username: wordpress
+    storage: {size: 5Gi, existingClaim: ""}
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+  dashboard:
+    image: {repository: mariadb, tag: "11.4", digest: ""}
+    database: urumi_dashboard
+    username: urumi
+    storage: {size: 2Gi, existingClaim: ""}
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: "1", memory: 512Mi}
+
+wordpress:
+  storage: {size: 5Gi, existingClaim: ""}
+  title: Urumi Store
+  adminUser: urumi-admin
+  adminEmail: admin@urumi.test
+  resources:
+    requests: {cpu: 200m, memory: 256Mi}
+    limits: {cpu: "1", memory: 768Mi}
+  bootstrap:
+    enabled: true
+    activeDeadlineSeconds: 600
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: "1", memory: 768Mi}
+
+backend:
+  adminEmail: admin@urumi.test
+  openrouterModel: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 512Mi}
+
+frontend:
+  # Trust client IPs only from the cluster's Ingress pods. Adapt to your CNI.
+  trustedProxyCidrs: [10.42.0.0/16]
+  resources:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 250m, memory: 128Mi}
+
+wooMcp:
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {cpu: 500m, memory: 384Mi}
+clock:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+calculator:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+
+probes:
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  startupFailureThreshold: 60

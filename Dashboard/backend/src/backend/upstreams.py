@@ -5,9 +5,13 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastmcp import FastMCP
+from starlette.responses import PlainTextResponse
 
 def make_server(kind):
     server=FastMCP(kind)
+    @server.custom_route('/health', methods=['GET'])
+    async def health(_request):
+        return PlainTextResponse('ok')
     if kind=='clock':
         @server.tool()
         def current_time(timezone: str='Asia/Kolkata') -> dict:

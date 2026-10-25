@@ -1,0 +1,142 @@
+{{- $name := include "urumi.name" . -}}
+{{- $apps := dict "backend" (dict "image" "backend" "port" 8001 "uid" 10001) "frontend" (dict "image" "frontend" "port" 8080 "uid" 101) "woo-mcp" (dict "image" "wooMcp" "port" 8000 "uid" 10001) "clock" (dict "image" "backend" "port" 8002 "uid" 10001) "calculator" (dict "image" "backend" "port" 8003 "uid" 10001) -}}
+{{- range $component, $app := $apps }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-{{ $component }}
+  labels:
+    {{- include "urumi.labels" $ | nindent 4 }}
+spec:
+  replicas: {{ if and $.Values.maintenance.enabled (eq $component "backend") }}0{{ else }}1{{ end }}
+  {{- if eq $component "backend" }}
+  # One process owns schema/bootstrap and the in-memory login rate limiter.
+  strategy: {type: Recreate}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $component }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+        app.kubernetes.io/component: {{ $component }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmaps.yaml") $ | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ $app.uid }}
+        runAsGroup: {{ $app.uid }}
+        fsGroup: {{ $app.uid }}
+        seccompProfile: {type: RuntimeDefault}
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if eq $component "backend" }}
+      initContainers:
+        - name: wait-for-database
+          image: {{ include "urumi.image" $.Values.images.backend | quote }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          command: [python, -c, "from backend.store import query; query('SELECT 1')"]
+          env:
+            {{- include "urumi.dashboardDatabaseEnv" $ | nindent 12 }}
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      {{- end }}
+      containers:
+        - name: {{ $component }}
+          image: {{ include "urumi.image" (index $.Values.images $app.image) | quote }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          {{- if or (eq $component "clock") (eq $component "calculator") }}
+          command: [python, -m, backend.upstreams, {{ $component }}]
+          {{- end }}
+          ports: [{name: http, containerPort: {{ $app.port }}}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          {{- if eq $component "backend" }}
+          env:
+            {{- include "urumi.dashboardDatabaseEnv" $ | nindent 12 }}
+            - {name: SERVE_FRONTEND, value: "0"}
+            - {name: DASHBOARD_DATA, value: /data/workspace}
+            - {name: ENCRYPTION_KEY_FILE, value: /run/secrets/dashboard/encryption-key}
+            - {name: ADMIN_EMAIL, value: {{ $.Values.backend.adminEmail | quote }}}
+            - {name: COOKIE_SECURE, value: {{ ternary "1" "0" $.Values.ingress.tls.enabled | quote }}}
+            - {name: WOO_MCP_URL, value: "http://{{ $name }}-woo-mcp:8000/mcp"}
+            - {name: CLOCK_MCP_URL, value: "http://{{ $name }}-clock:8002/mcp"}
+            - {name: CALCULATOR_MCP_URL, value: "http://{{ $name }}-calculator:8003/mcp"}
+            - {name: OPENROUTER_MODEL, value: {{ $.Values.backend.openrouterModel | quote }}}
+            - name: ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secrets.dashboard }}, key: admin-password}}
+            - name: WOO_MCP_AUTH_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secrets.wooMcp }}, key: auth-token}}
+            - name: OPENROUTER_API_KEY
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secrets.dashboard }}, key: openrouter-api-key, optional: true}}
+          {{- else if eq $component "woo-mcp" }}
+          env:
+            - {name: WOO_BASE_URL, value: "http://{{ $name }}-wordpress"}
+            # WordPress accepts REST Basic auth on this trusted private HTTP hop.
+            - {name: WOO_FORWARDED_PROTO, value: https}
+            - {name: MCP_HOST, value: 0.0.0.0}
+            - {name: MCP_PORT, value: "8000"}
+            - name: WOO_CONSUMER_KEY
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secrets.wooMcp }}, key: consumer-key}}
+            - name: WOO_CONSUMER_SECRET
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secrets.wooMcp }}, key: consumer-secret}}
+            - name: MCP_AUTH_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secrets.wooMcp }}, key: auth-token}}
+          {{- else if ne $component "frontend" }}
+          env:
+            - {name: MCP_HOST, value: 0.0.0.0}
+          {{- end }}
+          {{- $configKey := ternary "wooMcp" $component (eq $component "woo-mcp") }}
+          resources: {{ toYaml (index $.Values $configKey).resources | nindent 12 }}
+          {{- $ready := ternary "/frontend-health" "/health" (eq $component "frontend") }}
+          {{- $live := ternary "/live" $ready (eq $component "backend") }}
+          startupProbe:
+            httpGet: {path: {{ $live }}, port: http}
+            periodSeconds: {{ $.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.startupFailureThreshold }}
+          livenessProbe:
+            httpGet: {path: {{ $live }}, port: http}
+            periodSeconds: {{ $.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.failureThreshold }}
+          readinessProbe:
+            httpGet: {path: {{ $ready }}, port: http}
+            periodSeconds: {{ $.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.failureThreshold }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            {{- if eq $component "frontend" }}
+            - {name: config, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf, readOnly: true}
+            {{- else if eq $component "backend" }}
+            - {name: data, mountPath: /data}
+            - {name: encryption-key, mountPath: /run/secrets/dashboard, readOnly: true}
+            {{- end }}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        {{- if eq $component "frontend" }}
+        - name: config
+          configMap: {name: {{ $name }}-frontend}
+        {{- else if eq $component "backend" }}
+        - {name: data, emptyDir: {}}
+        - name: encryption-key
+          secret:
+            secretName: {{ $.Values.secrets.dashboard }}
+            defaultMode: 0440
+            items: [{key: encryption-key, path: encryption-key}]
+        {{- end }}
+{{- end }}

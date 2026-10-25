@@ -1,0 +1,36 @@
+# Replace registry paths, immutable tags and domains before deploying.
+images:
+  wordpress: {repository: ghcr.io/your-org/urumi-wordpress, tag: replace-with-commit}
+  backend: {repository: ghcr.io/your-org/urumi-dashboard-backend, tag: replace-with-commit}
+  frontend: {repository: ghcr.io/your-org/urumi-dashboard-frontend, tag: replace-with-commit}
+  wooMcp: {repository: ghcr.io/your-org/urumi-woo-mcp, tag: replace-with-commit}
+ingress:
+  storeHost: store.example.com
+  dashboardHost: dashboard.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  tls:
+    enabled: true
+    secretName: urumi-tls
+persistence:
+  storageClass: local-path
+databases:
+  store:
+    storage: {size: 20Gi}
+    resources:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "2", memory: 2Gi}
+  dashboard:
+    storage: {size: 10Gi}
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "1", memory: 1Gi}
+wordpress:
+  adminEmail: admin@example.com
+  storage: {size: 10Gi}
+  resources:
+    requests: {cpu: 500m, memory: 512Mi}
+    limits: {cpu: "2", memory: 1Gi}
+backend:
+  adminEmail: admin@example.com

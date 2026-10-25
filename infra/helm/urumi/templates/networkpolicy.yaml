@@ -1,0 +1,37 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $name := include "urumi.name" . -}}
+{{- $sources := dict "backend" (list "frontend") "woo-mcp" (list "backend") "clock" (list "backend") "calculator" (list "backend") "store-db" (list "wordpress" "wordpress-bootstrap") "dashboard-db" (list "backend") "wordpress" (list "woo-mcp") "frontend" (list) -}}
+{{- range $component, $allowed := $sources }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-{{ $component }}
+  labels:
+    {{- include "urumi.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $component }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range $source := $allowed }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+              app.kubernetes.io/component: {{ $source }}
+        {{- end }}
+        {{- if or (eq $component "wordpress") (eq $component "frontend") }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.networkPolicy.ingressNamespace }}
+          podSelector:
+            matchLabels: {{ toYaml $.Values.networkPolicy.ingressPodSelector | nindent 14 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ index (dict "backend" 8001 "woo-mcp" 8000 "clock" 8002 "calculator" 8003 "store-db" 3306 "dashboard-db" 3306 "wordpress" 80 "frontend" 8080) $component }}
+{{- end }}
+{{- end }}
