@@ -1,5 +1,197 @@
 # Assignment overview
 
+> Historical implementation notes: the SQLite and combined frontend/backend
+> descriptions below predate the MariaDB and Kubernetes deployment. The current
+> [System design and tradeoffs](docs/SYSTEM_DESIGN.md) and
+> [threat model](docs/THREAT_MODEL.md) describe the delivered system.
+
+## Store provisioning decisions — 2026-10-26
+
+This section records the choices behind extending the working single-store
+application into a provisioning platform. The earlier notes below remain as
+implementation history. Operational instructions are in
+[the provisioning guide](docs/PROVISIONING.md).
+
+### Start from a verified core
+
+The extension was started after the local core smoke test passed: both Ingress
+hosts, dashboard login, authenticated gateway access, a real WooCommerce read and
+calculator execution. The existing cluster first needed to be started. Keeping
+the original shared store allowed the new lifecycle to be tested independently
+and checked for regressions after deployment.
+
+### Helm for the platform; Kubernetes API for individual stores
+
+The same Helm chart deploys the dashboard, backend and provisioning controller
+locally and on a production-like VPS. Environment differences remain in values.
+Individual stores are created through the Kubernetes API, which the provisioning
+requirement explicitly permits. This avoids running Helm subprocesses and managing
+per-store Helm release state inside the application. The existing Python HTTP
+client provides authenticated API access without another runtime dependency.
+
+The tradeoff is that store resource definitions live in Python rather than a
+separate per-store chart. They need their own resource-contract tests. Helm
+uninstall removes the platform components but does not remove dynamically created
+store namespaces; stores must be deleted through the platform first.
+
+### A separate controller with durable database intents
+
+The web API saves a request in MariaDB and returns HTTP 202. A separate controller
+performs the Kubernetes work. This keeps a long bootstrap out of the HTTP request
+and avoids relying on background tasks that disappear when a web process restarts.
+The backend does not need a Kubernetes token.
+
+MariaDB was already required for users, upstreams and audits, so the `stores`
+table also records desired state, status, phase, deadline, failure reason and
+upstream association. A polling controller resumes unfinished work from those
+records. A queue or custom Kubernetes resource could support a larger operator,
+but would introduce another persistence or API lifecycle for this project. The
+tradeoff is dependence on the shared database and a short polling delay.
+
+### Stable identities, safe retries and bounded concurrency
+
+The server generates a store UUID, namespace and host. A browser-generated
+`request_key`, unique per owner, makes repeated create submissions return the same
+store. Reusing a key with a different name is rejected; a deleted request cannot
+recreate its store. An explicit retry after failure cleanup keeps the ID/host and
+starts a new attempt with a new deadline.
+
+Kubernetes resources use stable names and ownership labels. Create-if-absent
+preserves existing Secrets, PVC bindings and Job templates after an interrupted
+operation. Foreign ownership causes failure instead of mutation. This supports
+restart recovery, but deliberately does not update existing stores when templates
+or image values change; continuous drift repair and upgrades remain future work.
+
+A MariaDB named lock excludes competing reconciliation steps for the same store
+and is released when its database connection dies. A semaphore allows different
+stores to progress concurrently, with four slots by default. This avoids a global
+provisioning lock while keeping controller concurrency bounded.
+
+### One namespace and one stateful stack per store
+
+Each store has its own WordPress, MySQL, WooCommerce MCP server, bootstrap Job,
+Secrets, ConfigMap, Services, two PVCs and Ingress. Sharing WordPress or database
+credentials would make deletion and isolation harder to reason about. A namespace
+also gives Kubernetes a natural boundary for policies, quotas and teardown.
+
+The cost is additional memory, CPU and storage for every store. Namespace isolation
+is not equivalent to a separate VM or cluster. The controller, cluster operators,
+dashboard database, encryption key and workspace administrators remain trusted
+across stores.
+
+### Register tools only after application readiness
+
+Ready requires bootstrap completion, ready database/application workloads and an
+authenticated `list_products` call through the store's MCP server. With TLS enabled,
+the controller also waits for the store TLS Secret. Pod readiness alone would not
+prove that WooCommerce bootstrap and integration credentials actually work.
+
+The gateway registration and Ready state commit in one database transaction. The
+controller rechecks desired state under a row lock before registering, preventing
+a concurrent deletion from bringing the tools back. Bootstrap still uses WP-CLI;
+runtime tools continue to use the WooCommerce REST API.
+
+### Store-specific routing and ownership checks
+
+Generated tools use `store_<name>_<stable-id>__<tool>`, making the target store
+visible while preventing collisions. Existing shared upstreams retain their
+`s<server-id>__<tool>` names for compatibility. Tool descriptions identify the
+store and its UTC timezone.
+
+Owners and admins can discover and invoke a provisioned store's tools. The gateway
+checks this on every call, including calls with a guessed numeric upstream alias,
+so hiding tools in the dashboard is not the authorization boundary. Generic
+upstream edit/delete endpoints reject managed entries to preserve controller
+ownership. The original shared tools remain available to workspace members;
+fine-grained per-tool scopes are not implemented.
+
+Each store receives random credentials in a Kubernetes Secret. The gateway stores
+its MCP credential encrypted and supplies that credential on outbound connections;
+client session/API tokens are never passed upstream. Registry pull Secrets are
+copied into a store namespace when private images need them. Existing namespaces
+require operator-managed credential rotation.
+
+### Network isolation before workloads start
+
+Default-deny ingress and egress policies are created before store pods. Narrow
+allowances permit DNS, WordPress/bootstrap to the same namespace's database, MCP
+to its own WordPress, Ingress-controller access to WordPress, and platform
+backend/controller access to MCP. Both source egress and destination ingress
+therefore restrict cross-store access.
+
+This requires a NetworkPolicy-enforcing CNI. It also blocks plugin downloads,
+outbound mail and arbitrary integrations until an operator adds suitable policies.
+Only the controller mounts a Kubernetes token. Its explicit ClusterRole avoids
+wildcard and exec permissions, but namespace/workload creation still gives it
+substantial cluster-wide authority; ownership labels do not contain a compromised
+controller.
+
+### Guardrails at admission and inside Kubernetes
+
+The default maximum is three stores per user. Admission locks the owner's database
+row before counting and inserting, so parallel create requests cannot both take
+the last slot. Failed and Deleting stores continue to occupy slots until deletion
+completes. ResourceQuota limits aggregate namespace resources and object counts;
+LimitRange supplies defaults and bounds container resources.
+
+The default provisioning deadline is 900 seconds and survives controller restarts.
+A timeout records a reason and enters cleanup. These controls bound provisioning
+and namespace allocation; they do not provide a global chat quota, prevent users
+creating multiple accounts, or turn local-path capacity requests into physical
+filesystem quotas.
+
+### Deletion completes only after storage cleanup
+
+Deletion atomically removes MCP registration and records the delete intent, then
+the controller deletes the owned namespace. It waits for the namespace and all
+PV objects referencing it to disappear before marking the store Deleted. A
+Deleted tombstone preserves request idempotency. Failure cleanup follows the same
+resource-removal path; retry becomes available only after cleanup completes.
+
+Provisioning requires a StorageClass with reclaim policy Delete. A Retain class
+would conflict with the promised teardown. Stuck finalizers or storage failures
+leave cleanup pending instead of reporting success; the controller does not
+force-remove finalizers. An already running tool call can finish after deletion
+is requested, but subsequent calls cannot use the removed registration.
+
+### Stable URLs and production certificate support
+
+Local generated hosts use `<id>.127.0.0.1.sslip.io`, avoiding a hosts-file edit for
+each new store. This depends on external DNS and can be blocked by DNS rebinding
+protection, so hosts-file or local wildcard DNS alternatives are documented.
+Production uses wildcard DNS under the configured store domain and inherits the
+platform's Ingress/TLS settings.
+
+Each production store requests its own certificate rather than copying a wildcard
+private key into every namespace. The quota reserves a second Ingress and a narrow
+policy permits the temporary cert-manager HTTP-01 solver. The tradeoff is
+certificate issuance time, ACME limits and dependence on correct public DNS and
+issuer configuration.
+
+### Evidence and boundaries of testing
+
+The two-store acceptance test uses real Kubernetes resources, WordPress databases,
+MCP connections and the chat handler. It creates stores concurrently, replaces the
+controller during provisioning, seeds today's orders, compares Alpha's two orders
+totaling USD 40 against Beta's one totaling USD 12, and checks isolation using both
+Service DNS and direct Pod IPs. It then deletes one store, asserts namespace/PV/tool
+removal and verifies the remaining store still works before removing the fixtures.
+The dashboard create flow and automatic Ready update were also checked manually.
+
+Only the model response is a deterministic fixture in the automated chat check.
+This makes routing and lifecycle tests reproducible without provider credentials
+or billing; it does not establish live-model reasoning quality. Live OpenRouter
+inference and production certificate issuance remain separate checks. Backend
+tests cover admission races, ownership, retries, interrupted provisioning, timeout
+cleanup, delete/registration races, Secret preservation and waiting for PV removal.
+
+Restart recovery assumes the dashboard database and cluster storage survive.
+It is not disaster recovery. The original backup helper refuses active provisioned
+namespaces because it does not capture their databases, files and Secrets. Full
+coordinated store backups, upgrades and continuous health repair remain explicit
+production follow-up work.
+
+---
 
 
 ## problem statements
