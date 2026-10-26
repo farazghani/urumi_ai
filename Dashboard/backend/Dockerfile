@@ -9,6 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     SERVE_FRONTEND=0
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --locked --no-dev \
     && useradd --system --uid 10001 --create-home urumi \

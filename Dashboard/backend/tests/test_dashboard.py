@@ -45,7 +45,7 @@ def workspace(tmp_path,monkeypatch,upstreams,mariadb):
     monkeypatch.setenv('ADMIN_PASSWORD','test-admin-password-123')
     with store.db() as db, db.cursor() as cursor:
         cursor.execute('SET FOREIGN_KEY_CHECKS=0')
-        for table in ('sessions','api_keys','audit','upstreams','settings','users'):
+        for table in ('stores','sessions','api_keys','audit','upstreams','settings','users'):
             cursor.execute(f'DROP TABLE IF EXISTS `{table}`')
     module.attempts.clear()
     with TestClient(module.app) as client:
@@ -276,3 +276,129 @@ def test_transactions_roll_back_and_enforce_foreign_keys(workspace):
             cursor.execute("INSERT INTO upstreams(name,url) VALUES('rollback','http://example.invalid')")
             cursor.execute("INSERT INTO sessions VALUES('invalid-user',99999,9999999999)")
     assert len(store.query('SELECT id FROM upstreams'))==before
+
+@pytest.fixture
+def provisioning(workspace, monkeypatch):
+    from backend import stores
+    monkeypatch.setattr(stores, 'config', lambda: {'enabled': True, 'maxStoresPerUser': 2,
+        'domain': '127.0.0.1.sslip.io', 'tls': False, 'timeoutSeconds': 900, 'concurrency': 4})
+    return workspace
+
+
+def test_store_retry_admission_and_ownership(provisioning):
+    from concurrent.futures import ThreadPoolExecutor
+    c = customer(); other = customer('Other', 'other@example.com')
+    payload = {'name': 'Mumbai shop', 'request_key': 'retry-key-1234567890'}
+    first = c.post('/api/stores', json=payload)
+    assert first.status_code == 202
+    row = first.json(); sid = row['id']
+    assert c.post('/api/stores', json=payload).json()['id'] == sid
+    assert c.post('/api/stores', json=payload | {'name': 'Changed'}).status_code == 409
+    assert other.get('/api/stores').json() == []
+    assert other.get('/api/stores/' + sid).status_code == 404
+    assert other.delete('/api/stores/' + sid).status_code == 404
+    assert other.post('/api/stores/' + sid + '/retry').status_code == 404
+    assert c.post('/api/stores/' + sid + '/retry').status_code == 202
+    # Both requests race for the one remaining slot. Row locking admits only one.
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(lambda n: c.post('/api/stores', json={'name': 'Store ' + str(n), 'request_key': 'concurrent-key-000' + str(n)}).status_code, (1, 2)))
+    assert sorted(results) == [202, 409]
+    assert c.delete('/api/stores/' + sid).json()['status'] == 'Deleting'
+    assert c.post('/api/stores', json={'name': 'Still full', 'request_key': 'yet-another-key-1234'}).status_code == 409
+    store.execute("UPDATE stores SET status='Deleted',phase='Deleted' WHERE id=?", (sid,))
+    assert c.post('/api/stores', json=payload).status_code == 410
+    assert c.post('/api/stores', json={'name': 'New', 'request_key': 'yet-another-key-1234'}).status_code == 202
+
+
+def test_store_gateway_scope_and_atomic_unregister(provisioning, upstreams):
+    c = customer(); other = customer('Other', 'other@example.com')
+    row = c.post('/api/stores', json={'name': 'Alpha', 'request_key': 'alpha-request-key-1234'}).json()
+    upstream = store.execute('INSERT INTO upstreams(name,url,timeout) VALUES(?,?,?)', ('Alpha', upstreams[1], 2))
+    store.execute("UPDATE stores SET upstream_id=?,status='Ready',phase='Ready' WHERE id=?", (upstream, row['id']))
+    name = row['tool_prefix'] + '__calculate'
+    assert any(s.get('store_id') == row['id'] for s in c.get('/api/servers').json())
+    assert not any(s.get('store_id') == row['id'] for s in other.get('/api/servers').json())
+    args = {'name': name, 'arguments': {'operation': 'add', 'a': 2, 'b': 3}}
+    assert not c.post('/api/tools/call', json=args).json()['isError']
+    assert other.post('/api/tools/call', json=args).json()['isError']
+    # The old numeric alias must not bypass the managed prefix/ownership.
+    assert other.post('/api/tools/call', json=args | {'name': f's{upstream}__calculate'}).json()['isError']
+    assert provisioning.delete('/api/servers/' + str(upstream)).status_code == 409
+    assert provisioning.put('/api/servers/' + str(upstream), json={'name': 'Escape', 'url': upstreams[1]}).status_code == 409
+    key = c.post('/api/keys', json={'name': 'MCP'}).json()
+    provisioning.patch('/api/keys/' + str(key['id']), json={'status': 'approved'})
+    result = c.post('/mcp', headers={'Authorization': 'Bearer ' + key['token']}, json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}).json()
+    assert name in [t['name'] for t in result['result']['tools']]
+    assert c.delete('/api/stores/' + row['id']).status_code == 202
+    assert c.post('/api/tools/call', json=args).json()['isError']
+    assert store.query('SELECT * FROM upstreams WHERE id=?', (upstream,), one=True) is None
+
+
+class FakeStoreKube:
+    def __init__(self):
+        self.applies = 0
+        self.complete = False
+        self.gone = False
+        self.interrupt = False
+    async def apply(self, row):
+        self.applies += 1
+        if self.interrupt:
+            self.interrupt = False
+            raise RuntimeError('simulate process interruption')
+    async def ready(self, row): return self.complete
+    async def token(self, row): return 'test-mcp-token'
+    def url(self, row): return 'http://mcp.' + row['namespace'] + '.svc:8000/mcp'
+    async def cleanup(self, row): return self.gone
+
+
+def test_controller_restart_timeout_cleanup_and_retry(provisioning):
+    from backend.provisioner import Controller
+    from backend import stores
+    user = provisioning.get('/api/me').json()
+    row = stores.create(user, 'Restart', 'restart-request-key-123')
+    kube = FakeStoreKube(); kube.interrupt = True
+    controller = Controller(stores.config(), kube)
+    asyncio.run(controller.reconcile(row['id']))
+    assert Controller.row(row['id'])['phase'] == 'Requested'
+    # New process resumes the persisted intent and original namespace.
+    controller = Controller(stores.config(), kube)
+    asyncio.run(controller.reconcile(row['id']))
+    assert kube.applies == 2
+    assert Controller.row(row['id'])['phase'] == 'Bootstrapping'
+    kube.complete = True
+    asyncio.run(controller.reconcile(row['id']))
+    ready = Controller.row(row['id']); assert ready['status'] == 'Ready'
+    asyncio.run(controller.reconcile(row['id']))
+    assert Controller.row(row['id'])['upstream_id'] == ready['upstream_id']
+    stores.remove(user, row['id'])
+    asyncio.run(controller.reconcile(row['id']))
+    assert Controller.row(row['id'])['status'] == 'Deleting'
+    kube.gone = True
+    asyncio.run(controller.reconcile(row['id']))
+    assert Controller.row(row['id'])['status'] == 'Deleted'
+    timed = stores.create(user, 'Timeout', 'timeout-request-key-123')
+    store.execute("UPDATE stores SET deadline=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE id=?", (timed['id'],))
+    asyncio.run(controller.reconcile(timed['id']))
+    failed = Controller.row(timed['id'])
+    assert failed['status'] == 'Failed' and 'timed out' in failed['reason']
+    assert provisioning.post('/api/stores/' + timed['id'] + '/retry').status_code == 409
+    asyncio.run(controller.reconcile(timed['id']))
+    assert Controller.row(timed['id'])['phase'] == 'Failed'
+    assert provisioning.post('/api/stores/' + timed['id'] + '/retry').status_code == 202
+    assert Controller.row(timed['id'])['namespace'] == timed['namespace']
+
+
+def test_controller_delete_race_does_not_register(provisioning):
+    from backend.provisioner import Controller
+    from backend import stores
+    user = provisioning.get('/api/me').json()
+    row = stores.create(user, 'Race', 'delete-race-key-12345')
+    kube = FakeStoreKube()
+    async def concurrent_delete(row):
+        stores.remove(user, row['id'])
+        return True
+    kube.ready = concurrent_delete
+    asyncio.run(Controller(stores.config(), kube).reconcile(row['id']))
+    result = Controller.row(row['id'])
+    assert result['desired'] == 'Deleted' and result['status'] == 'Deleting'
+    assert result['upstream_id'] is None

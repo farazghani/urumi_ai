@@ -26,7 +26,9 @@ async def inspect(server):
                 tools = await client.list_tools()
         for tool in tools:
             item = tool.model_dump(mode='json', exclude_none=True)
-            item['name'] = f"s{server['id']}__{tool.name}"
+            item['name'] = f"{server.get('tool_prefix') or ('s' + str(server['id']))}__{tool.name}"
+            if server.get('store_id'):
+                item['description'] = f"Store: {server['name']}. Timezone: UTC. " + item.get('description', '')
             result['tools'].append(item)
         result.update(status='online', latency=round((time.monotonic()-started)*1000))
     except Exception:
@@ -35,16 +37,27 @@ async def inspect(server):
     return result
 
 
-async def discover():
-    return await asyncio.gather(*(inspect(s) for s in store.query('SELECT * FROM upstreams ORDER BY id')))
+def accessible(user):
+    sql = """SELECT u.*,s.id AS store_id,s.tool_prefix,s.user_id AS owner_id FROM upstreams u
+        LEFT JOIN stores s ON s.upstream_id=u.id"""
+    args = ()
+    if user and user['role'] != 'admin':
+        sql += ' WHERE s.id IS NULL OR s.user_id=?'
+        args = (user['id'],)
+    return store.query(sql + ' ORDER BY u.id', args)
+
+
+async def discover(user=None):
+    return await asyncio.gather(*(inspect(s) for s in accessible(user)))
 
 
 async def call(user, name, arguments, source='tool.call'):
     started = time.monotonic()
     try:
         prefix, original = name.split('__', 1)
-        server = store.query('SELECT * FROM upstreams WHERE id=? AND enabled=1', (int(prefix.removeprefix('s')),), one=True)
-        if not prefix.startswith('s') or not server:
+        server = next((s for s in accessible(user) if s['enabled'] and
+                       prefix == (s.get('tool_prefix') or 's' + str(s['id']))), None)
+        if not server:
             raise ValueError()
     except (ValueError, AttributeError):
         store.audit(user, source, str(name)[:150], 'error')

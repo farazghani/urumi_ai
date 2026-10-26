@@ -74,6 +74,16 @@ SCHEMA = [
         created DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id),
         INDEX(user_id,created), INDEX(created))""",
     "CREATE TABLE IF NOT EXISTS settings (`key` VARCHAR(128) PRIMARY KEY, value LONGTEXT NOT NULL)",
+    """CREATE TABLE IF NOT EXISTS stores(
+        id VARCHAR(32) PRIMARY KEY, user_id BIGINT NOT NULL, name VARCHAR(60) NOT NULL,
+        request_key VARCHAR(64) NOT NULL, namespace VARCHAR(63) UNIQUE NOT NULL,
+        host VARCHAR(253) NOT NULL, url VARCHAR(300) NOT NULL, tool_prefix VARCHAR(40) UNIQUE NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'Provisioning', desired VARCHAR(16) NOT NULL DEFAULT 'Ready',
+        phase VARCHAR(32) NOT NULL DEFAULT 'Requested', reason VARCHAR(500) NOT NULL DEFAULT '',
+        upstream_id BIGINT UNIQUE, created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, deadline DATETIME NOT NULL,
+        UNIQUE(user_id,request_key), INDEX(status), FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(upstream_id) REFERENCES upstreams(id) ON DELETE SET NULL)""",
 ]
 
 def create_schema():
