@@ -16,6 +16,7 @@ There are no external databases or host-running application services.
 | WooCommerce MCP | Deployment / 8000 | None |
 | Clock MCP | Deployment / 8002 | None |
 | Calculator MCP | Deployment / 8003 | None |
+| Store provisioner | Deployment / 8004 (probe only) | Durable intents in dashboard MariaDB |
 
 Ingress routes the store host to WordPress and the dashboard host to Nginx.
 Nginx proxies `/api/`, `/mcp`, and `/health` to the backend, keeping browser requests
@@ -216,7 +217,7 @@ WP-CLI disables TLS for its initialization check because MySQL's generated
 self-signed certificate is not a trusted server identity. Configure verified
 database TLS separately if the cluster network requires transport encryption.
 
-Readiness/liveness and resource requests/limits cover all eight long-running
+Readiness/liveness and resource requests/limits cover all nine long-running
 workloads. Backend readiness checks MariaDB; `/live` is independent of it. WordPress
 readiness checks its database, and its liveness only executes a small PHP endpoint.
 The WordPress check works before site installation, so Helm's `--wait` does not
@@ -365,3 +366,27 @@ avoid overlapping schema/bootstrap owners and retains its process-local login
 throttle. These rollouts can interrupt service. Scaling requires a shared rate
 limiter, reviewed migrations, and shared WordPress storage. This setup adds no
 database replication, automatic node failover or external secret manager.
+
+
+## Provisioned stores
+
+The chart also deploys a controller for dashboard **Stores**. Each generated
+namespace gets its own MySQL, WordPress, MCP, Secrets, two PVCs, Ingress,
+ResourceQuota, LimitRange and ingress/egress NetworkPolicies. Only owners/admins
+can discover or invoke its automatically registered store-specific tools.
+See [the provisioning guide](../docs/PROVISIONING.md) for DNS/TLS, values, RBAC,
+timeouts, retries, teardown and backup limitations. Delete all stores before
+uninstalling Helm: generated namespaces are managed by the controller and persist
+across Helm removal. Maintenance mode scales both backend and controller to zero.
+
+```sh
+PYTHONPATH=Dashboard/backend/src Dashboard/backend/.venv/bin/python infra/tests/test_store_resources.py
+python3 infra/tests/provisioning_smoke.py
+```
+
+On 2026-10-26, the two-store local test passed concurrent creation, controller
+replacement, real WooCommerce order comparisons through the chat handler with a
+fixture model, cross-store Service-DNS/Pod-IP denial, namespace/PV/tool removal,
+and continued operation of the remaining store. Fixture stores were cleaned up.
+Live OpenRouter inference and actual VPS DNS/certificate issuance remain separate
+checks requiring your model key and production domain.

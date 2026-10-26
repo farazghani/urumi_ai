@@ -34,3 +34,8 @@ wordpress:
     limits: {cpu: "2", memory: 1Gi}
 backend:
   adminEmail: admin@example.com
+
+provisioning:
+  domain: stores.example.com
+  # Must support NetworkPolicy and Delete reclaim policy.
+  storageClass: local-path

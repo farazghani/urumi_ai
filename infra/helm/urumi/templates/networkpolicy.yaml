@@ -1,6 +1,6 @@
 {{- if .Values.networkPolicy.enabled }}
 {{- $name := include "urumi.name" . -}}
-{{- $sources := dict "backend" (list "frontend") "woo-mcp" (list "backend") "clock" (list "backend") "calculator" (list "backend") "store-db" (list "wordpress" "wordpress-bootstrap") "dashboard-db" (list "backend") "wordpress" (list "woo-mcp") "frontend" (list) -}}
+{{- $sources := dict "backend" (list "frontend") "woo-mcp" (list "backend") "clock" (list "backend") "calculator" (list "backend") "store-db" (list "wordpress" "wordpress-bootstrap") "dashboard-db" (list "backend" "provisioner") "wordpress" (list "woo-mcp") "frontend" (list) -}}
 {{- range $component, $allowed := $sources }}
 ---
 apiVersion: networking.k8s.io/v1

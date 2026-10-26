@@ -25,12 +25,12 @@ class ChartRequirements(unittest.TestCase):
             with self.subTest(environment=environment):
                 documents = render(environment)
                 workloads = [d for d in documents if d['kind'] in ('Deployment', 'StatefulSet')]
-                self.assertEqual(len(workloads), 8)
+                self.assertEqual(len(workloads), 9)
                 self.assertEqual(sum(d['kind'] == 'StatefulSet' for d in workloads), 2)
                 self.assertFalse(any(d['kind'] == 'Secret' for d in documents))
                 for workload in workloads:
                     spec = workload['spec']['template']['spec']
-                    self.assertFalse(spec['automountServiceAccountToken'])
+                    self.assertEqual(spec['automountServiceAccountToken'], workload['metadata']['name'].endswith('-provisioner'))
                     for container in spec['containers']:
                         self.assertIn('readinessProbe', container)
                         self.assertIn('livenessProbe', container)
@@ -75,7 +75,7 @@ class ChartRequirements(unittest.TestCase):
         self.assertEqual(len(policies), 8)
         policy = next(d for d in policies if d['metadata']['name'] == 'test-dashboard-db')
         peers = policy['spec']['ingress'][0]['from']
-        self.assertEqual(len(peers), 1)
+        self.assertEqual(len(peers), 2)
         self.assertEqual(peers[0]['podSelector']['matchLabels']['app.kubernetes.io/component'], 'backend')
 
 

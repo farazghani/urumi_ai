@@ -107,3 +107,32 @@ probes:
   timeoutSeconds: 5
   failureThreshold: 3
   startupFailureThreshold: 60
+
+# Optional store provisioning platform. The original single store is unchanged.
+provisioning:
+  enabled: true
+  domain: stores.example.com
+  maxStoresPerUser: 3
+  timeoutSeconds: 900
+  concurrency: 4
+  storageClass: local-path
+  volumeSize: 2Gi
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: '1', memory: 512Mi}
+  quota:
+    requests.cpu: '2'
+    requests.memory: 3Gi
+    limits.cpu: '5'
+    limits.memory: 5Gi
+    pods: '8'
+    persistentvolumeclaims: '2'
+    requests.storage: 4Gi
+    services: '4'
+    secrets: '8'
+    configmaps: '4'
+    count/jobs.batch: '2'
+    count/deployments.apps: '2'
+    count/statefulsets.apps: '1'
+    # One store Ingress plus a temporary cert-manager HTTP-01 solver Ingress.
+    count/ingresses.networking.k8s.io: '2'

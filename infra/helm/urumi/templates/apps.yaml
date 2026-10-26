@@ -70,6 +70,9 @@ spec:
             - {name: SERVE_FRONTEND, value: "0"}
             - {name: DASHBOARD_DATA, value: /data/workspace}
             - {name: ENCRYPTION_KEY_FILE, value: /run/secrets/dashboard/encryption-key}
+            {{- if $.Values.provisioning.enabled }}
+            - {name: STORE_CONFIG_FILE, value: /config/settings.json}
+            {{- end }}
             - {name: ADMIN_EMAIL, value: {{ $.Values.backend.adminEmail | quote }}}
             - {name: COOKIE_SECURE, value: {{ ternary "1" "0" $.Values.ingress.tls.enabled | quote }}}
             - {name: WOO_MCP_URL, value: "http://{{ $name }}-woo-mcp:8000/mcp"}
@@ -125,6 +128,9 @@ spec:
             {{- else if eq $component "backend" }}
             - {name: data, mountPath: /data}
             - {name: encryption-key, mountPath: /run/secrets/dashboard, readOnly: true}
+            {{- if $.Values.provisioning.enabled }}
+            - {name: provisioning, mountPath: /config, readOnly: true}
+            {{- end }}
             {{- end }}
       volumes:
         - {name: tmp, emptyDir: {}}
@@ -133,6 +139,9 @@ spec:
           configMap: {name: {{ $name }}-frontend}
         {{- else if eq $component "backend" }}
         - {name: data, emptyDir: {}}
+        {{- if $.Values.provisioning.enabled }}
+        - {name: provisioning, configMap: {name: {{ $name }}-provisioning}}
+        {{- end }}
         - name: encryption-key
           secret:
             secretName: {{ $.Values.secrets.dashboard }}

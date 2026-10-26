@@ -8,3 +8,6 @@ ingress:
   dashboardHost: dashboard.urumi.test
 persistence:
   storageClass: local-path
+
+provisioning:
+  domain: 127.0.0.1.sslip.io

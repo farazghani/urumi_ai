@@ -27,6 +27,10 @@ def main():
                                                 '--ignore-not-found', '-o', 'name'], text=True)
     if replicas.strip() != '0' or ingress.strip():
         parser.error('Install the destination with maintenance.enabled=true first')
+    controllers = json.loads(subprocess.check_output(kubectl + ['get', 'pods', '-l',
+        f'app.kubernetes.io/instance={args.release},app.kubernetes.io/component=provisioner', '-o', 'json']))
+    if controllers['items']:
+        parser.error('Wait for provisioning controller pods to terminate before restoring dashboard state')
     for suffix in ('store-db', 'dashboard-db', 'wordpress', 'woo-mcp', 'dashboard'):
         name = f'{args.secret_prefix}-{suffix}'
         saved = json.loads((args.directory / f'{name}.json').read_text())

@@ -23,6 +23,14 @@ def main():
         f'app.kubernetes.io/instance={args.release},app.kubernetes.io/component=backend', '-o', 'json']))
     if replicas.strip() != '0' or ingress.strip() or pods['items']:
         parser.error('Enable maintenance mode and wait for backend pods to terminate before backup')
+    controllers = json.loads(subprocess.check_output(kubectl + ['get', 'pods', '-l',
+        f'app.kubernetes.io/instance={args.release},app.kubernetes.io/component=provisioner', '-o', 'json']))
+    if controllers['items']:
+        parser.error('Wait for the provisioning controller to stop in maintenance mode before backup')
+    stores = json.loads(subprocess.check_output(['kubectl', 'get', 'namespaces', '-l',
+        f'urumi.io/platform={args.namespace}-{args.release}', '-o', 'json']))
+    if stores['items']:
+        parser.error('This backup covers the original store only. Back up provisioned store namespaces/volumes/Secrets separately; see docs/PROVISIONING.md.')
     os.umask(0o077)
     args.directory.mkdir(parents=True, mode=0o700)
 

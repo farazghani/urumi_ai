@@ -18,7 +18,8 @@
     "wooMcp",
     "clock",
     "calculator",
-    "probes"
+    "probes",
+    "provisioning"
   ],
   "properties": {
     "global": {
@@ -410,6 +411,63 @@
         "startupFailureThreshold": {
           "type": "integer",
           "minimum": 1
+        }
+      }
+    },
+    "provisioning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "domain",
+        "maxStoresPerUser",
+        "timeoutSeconds",
+        "concurrency",
+        "storageClass",
+        "volumeSize",
+        "resources",
+        "quota"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "domain": {
+          "type": "string",
+          "maxLength": 210,
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+        },
+        "maxStoresPerUser": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "volumeSize": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        },
+        "quota": {
+          "type": "object",
+          "minProperties": 8,
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     }

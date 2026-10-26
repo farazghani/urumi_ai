@@ -1,0 +1,144 @@
+{{- if .Values.provisioning.enabled }}
+{{- $name := include "urumi.name" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-provisioning
+data:
+  settings.json: |
+    {{- $images := dict "wordpress" (include "urumi.image" .Values.images.wordpress) "database" (include "urumi.image" .Values.databases.store.image) "mcp" (include "urumi.image" .Values.images.wooMcp) }}
+    {{- $settings := merge (dict "platform" (printf "%s-%s" .Release.Namespace .Release.Name) "namespace" .Release.Namespace "release" .Release.Name "images" $images "imagePullPolicy" .Values.global.imagePullPolicy "imagePullSecrets" .Values.global.imagePullSecrets "tls" .Values.ingress.tls.enabled "ingressClass" .Values.ingress.className "ingressAnnotations" .Values.ingress.annotations "ingressNamespace" .Values.networkPolicy.ingressNamespace "ingressPodSelector" .Values.networkPolicy.ingressPodSelector) (deepCopy .Values.provisioning) }}
+    {{ $settings | toJson }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}-provisioner
+---
+# Dynamic namespaces require cluster-scoped permissions. Only this controller
+# mounts the token; the dashboard/backend has no Kubernetes API credentials.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-{{ $name }}-provisioner
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, create, delete]
+  - apiGroups: [""]
+    resources: [secrets, configmaps, services, persistentvolumeclaims, resourcequotas, limitranges]
+    verbs: [get, create]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [get, create]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, create]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, create]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-{{ $name }}-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}-provisioner
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Namespace }}-{{ $name }}-provisioner
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-provisioner
+spec:
+  replicas: {{ ternary 0 1 .Values.maintenance.enabled }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: provisioner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: provisioner
+      annotations:
+        checksum/config: {{ $settings | toJson | sha256sum }}
+    spec:
+      serviceAccountName: {{ $name }}-provisioner
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-database
+          image: {{ include "urumi.image" .Values.images.backend | quote }}
+          command: [python, -c, "from backend.store import query; query('SELECT 1')"]
+          env:
+            {{- include "urumi.dashboardDatabaseEnv" . | nindent 12 }}
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      containers:
+        - name: provisioner
+          image: {{ include "urumi.image" .Values.images.backend | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: [python, -m, backend.provisioner]
+          ports: [{name: http, containerPort: 8004}]
+          env:
+            {{- include "urumi.dashboardDatabaseEnv" . | nindent 12 }}
+            - {name: STORE_CONFIG_FILE, value: /config/settings.json}
+            - {name: STORE_BOOTSTRAP_DIR, value: /bootstrap}
+            - {name: ENCRYPTION_KEY_FILE, value: /run/secrets/dashboard/encryption-key}
+          resources: {{ toYaml .Values.provisioning.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            failureThreshold: 60
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 5
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
+            - {name: encryption-key, mountPath: /run/secrets/dashboard, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: config, configMap: {name: {{ $name }}-provisioning}}
+        - {name: bootstrap, configMap: {name: {{ $name }}-wordpress}}
+        - name: encryption-key
+          secret:
+            secretName: {{ .Values.secrets.dashboard }}
+            defaultMode: 0440
+            items: [{key: encryption-key, path: encryption-key}]
+        - {name: tmp, emptyDir: {}}
+{{- end }}
